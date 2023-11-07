@@ -1,0 +1,606 @@
+---
+title: "HACKATHON--IE6600--SEC01--GROUP 31"
+author: "Vinan Patwa, Neeraj Rangwani, Sakshi Gujarathi"
+date: "2023-02-11"
+output: html_document
+---
+
+# Introduction and Problem Statement
+
+According recent studies, only seven percent of Americans are satisfied with the current healthcare system.Uneven care has left health consumers unsatisfied since they are receiving different levels of care which is determined not by a standardized quality but by their location, condition, or insurance plan. Rural areas might not have enough hospitals, while urban cities may have an over flux of healthcare resources and facilities. This project is an attempt to trace this disparity in the US Healthcare and answer the underlying questions to understand and fix this broken system by performing an in depth analysis to compare metrics in aspect of infrastructure and population of the states that performing well the states that are lagging in terms of resources. ###We have used a dataset provided by the Homeland Infrastructure Foundation-Level Data (HIFLD) that is made available for Public Use without a license. We have also used supplementary dataset to get the statewise population data to find the number of beds per 1000 population.
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+
+setwd("C:/VinanPatwa/SPRING 23/IE6600/HACKATHON")
+
+```
+
+```{r libraries, echo=FALSE, message=FALSE, warning=FALSE}
+
+# install and declare the libraries
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(RColorBrewer)
+library(treemapify)
+library(treemap)
+library(stringr)
+#install.packages('wordcloud2')
+library(wordcloud2) 
+#install.packages('wordcloud')
+library(wordcloud)
+#install.packages("stopwords")
+library("stopwords")
+#install.packages("tidyverse")
+library(tidyverse)
+#install.packages("tidytext")
+library(tidytext)
+#install.packages("cowplot")
+library(cowplot)
+#install.packages('usmap')
+library(usmap)
+#install.packages('highcharter')
+library(highcharter)
+#install.packages('tm')
+library(tm)
+library(SnowballC)
+library(RColorBrewer)
+library(viridis)
+library(plotly)
+```
+
+# Exploratory Data Analysis
+
+```{r Data cleaning, echo=FALSE, message=FALSE, warning=FALSE}
+#read US Hospital dataset
+df_hosp <- read.csv("Hospitals.csv")
+
+#read US statewise population supplymentary dataset 
+df_population <- read.csv("US_population.csv")
+
+#join two dataset using "STATE" column for getting population of each state
+df_hospital <- merge(df_hosp, df_population, by ="STATE")
+
+#selecting the required column.
+df_hsp <-  subset(df_hospital, select = c("NAME","STATE_NAME","STATE","OBJECTID","ID",
+                "ADDRESS", "CITY", "TYPE", "STATUS","COUNTY", "COUNTRY", "LATITUDE", "LONGITUDE", "NAICS_DESC", "OWNER", "BEDS", "HELIPAD", "POPESTIMATE2019"))
+
+
+```
+
+```{r Data exploration,include=FALSE, echo=FALSE,message=FALSE, warning=FALSE}
+#Check null values
+sum(is.na(df_hsp$TYPE))
+sum(is.na(df_hsp$STATUS))
+sum(is.na(df_hsp$COUNTY))
+sum(is.na(df_hsp$COUNTRY))
+sum(is.na(df_hsp$CITY))
+sum(is.na(df_hsp$NAME))
+sum(is.na(df_hsp$STATE_NAME))
+sum(is.na(df_hsp$OBJECTID))
+sum(is.na(df_hsp$LATITUDE))
+sum(is.na(df_hsp$LONGITUDE))
+sum(is.na(df_hsp$OWNER))
+sum(is.na(df_hsp$BEDS))
+```
+
+```{r Exploratory Data Analysis, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Distribution of bed using Box plot to check outliers
+bxplt_bed <- ggplot(df_hsp, aes(y=BEDS)) + 
+      geom_boxplot() 
+
+#output- There is only one negative value in "BEDS" column. Otherwise distribution seems fine. No other Outliers.
+
+#check negative values for no of beds 
+ng_bed <- filter(df_hsp, df_hsp$BEDS < 0 )
+
+#Output - Negative value for no of BEDS is "-999" 
+
+
+
+
+# No of hospital with value for BEDS is "-999" and its distribution using boxplot
+ng_hsp <- filter(df_hsp,df_hsp$BEDS == "-999") %>%
+      group_by(STATE_NAME) %>%
+      count() %>%
+      arrange(desc(n))
+
+
+ng_box <- ggplot(ng_hsp, aes(y=n)) +
+      geom_boxplot()
+
+#Output - "Louisiana" state is having 71 hospital with  no of BEDS = "-999". 
+
+#finding avg no of beds 
+df_hsp_mod <- df_hsp[!(is.na(df_hsp$BEDS)|df_hsp$BEDS == "-999"), ]
+#mean(df_hsp_mod$BEDS)
+#output - avg no of bed is 146.
+
+# Finding average no of BEDS for each state
+df_avg_bed <- df_hsp %>%
+        filter(df_hsp$BEDS != "-999") %>%
+        group_by(STATE_NAME) %>%
+        summarize(avg_bed = mean(BEDS)) %>%
+        arrange(desc(avg_bed))
+
+
+#Output - avg no of beds for each state ranges from 47 to 307. That is wide range.  
+
+#No of rows with value "-999"
+df_x <- df_hsp %>%
+        filter(df_hsp$BEDS == "-999") %>%
+        count()
+
+#output - There is 647 no of rows having value "-999"
+
+
+#Conclusion - As no of rows having BEDS value is 647. which is significant compared to total no of rows 7563, We cant not drop these rows. And as avg no of beds per hospital for each state varies widely ( 47 to 307 ), we can not replace these values with avg no of beds(146). we will be replacing these values with average no of bed for the states that hospital belongs to. And "Louisiana" state having 71 no of hospital with "-999" values which is significant no of rows. So We will drop all these rows. 
+
+
+         
+
+```
+
+```{r Data preparation, echo=FALSE, message=FALSE, warning=FALSE}
+# Creating new dataframe for mean no of beds for each state
+df_mean_bed <- df_hsp_mod %>%
+            group_by(STATE_NAME) %>%
+            summarize(avg_bed = mean(BEDS)) 
+
+
+#Dropping null value of "BEDS" from original dataset
+df_hsp <- df_hsp[!(is.na(df_hsp$BEDS)), ]
+
+
+#Merging df_mean_bed and df_hsp  
+
+df_hsp_fnl <- merge(df_hsp, df_mean_bed, by = "STATE_NAME")
+
+
+#Droping the rows of having state name "Louisiana"
+df_hsp_final <- df_hsp_fnl %>%
+                filter(STATE_NAME != "Louisiana")
+
+
+
+# Replacing "-999" values with mean no of bed for the state that hospital belongs to
+for (i in 1:length(df_hsp_final$OBJECTID)) {
+   if (df_hsp_final[i,grep("BEDS", colnames(df_hsp_final)) ] < 0) {
+     df_hsp_final[i,grep("BEDS", colnames(df_hsp_final)) ] <- df_hsp_final[i,grep("avg_bed", colnames(df_hsp_final))]
+   } 
+} 
+
+
+
+
+df_hospital_final <- filter(df_hsp_final, df_hsp_final$OWNER != "NOT AVAILABLE")
+
+```
+
+```{r Calculate no of beds per 1000 population, echo=FALSE, message=FALSE, warning=FALSE}
+df_rate <- df_hsp_final %>%
+           group_by(STATE_NAME) %>%
+           summarize(Total_beds=sum(BEDS))
+
+
+df_rate_merge <- merge(df_rate, df_population, by = "STATE_NAME") 
+
+
+
+df_rate_new <- subset(df_rate_merge, select = c(STATE,STATE_NAME, Total_beds, POPESTIMATE2019)) %>% mutate(BEDS_RATIO = (Total_beds/POPESTIMATE2019)*1000) %>%
+  arrange(desc(BEDS_RATIO))
+  
+
+```
+
+# Section 1 - Exploring distribution of statewise availability of healthcare resources taking the number of beds in hospitals as a metric
+
+## Question 1
+
+### What is the state wise distribution of number of hospital beds per 1000 people across the US?
+
+```{r Question 1 Chloropleth , echo=FALSE, message=FALSE, warning=FALSE}
+#Transform data set to correct format
+df_rate_new$STATE_NAME <- tolower(df_rate_new$STATE_NAME)
+
+#rename column "STATE_NAME"
+#colnames(df_rate_new)[1] <- 
+
+#library(maps) # For map data
+states_map <- map_data("state")
+
+# Merge the data sets together
+df_chlor <- merge(df_rate_new, states_map, by.x = "STATE_NAME", by.y = "region")
+
+#arrange by group and order in ascending order
+df_chlor <- arrange(df_chlor, group, order)
+
+
+
+map_b <- ggplot(df_chlor, aes(x = long, y = lat, group = group, fill = BEDS_RATIO,text =                                 paste(STATE_NAME, '<br>', "Bed Ratio", BEDS_RATIO, "<br>",
+                              "Total No of Beds", Total_beds, "<br>", "Total Population",                               POPESTIMATE2019))) +
+geom_polygon(colour = "white", size=0.01) + theme_void() + scale_fill_viridis(option="B") + labs(title="NO OF BEDS PER 1000 PEOPLE") + 
+  theme(plot.title = element_text(size = 12, hjust = 0.5),
+    plot.caption = element_text(size = 8, hjust = 1)) +
+  coord_fixed(ratio = 1.3) 
+
+chlor_map <- ggplotly(map_b, tooltip = "text")
+chlor_map
+
+```
+
+## Output 1
+
+#### The above choropleth map gives insight about Total number of beds available , ratio of number of beds per 1000 people and total population for each state. It is inferred from the plot that District columbia has highest bed ratio followed by North dakota, mississippi, west virginia and ohio. These states have bed ratio more than 4.5. While new maxico, washigton, idaho, oregon and colorado are the states having Bed Ratio less than 2.5. It is also inferred that there are states with considerable population are doing very good compared to states having almost same population. We have also found that california one of the economically best performing state has Bed ratio 2.72 which is comparatively low.
+
+## Question 2
+
+### What is the distribution of Bed Ratio across the states for different types of ownership ?
+
+```{r Voilin plot for distribution of Bed ratio , echo=FALSE, message=FALSE, warning=FALSE}
+df_owner_stat <- df_hospital_final %>%
+           group_by(STATE_NAME, OWNER) %>%
+           summarize(Total_beds=sum(BEDS))
+
+df_stat_merge <- merge(df_owner_stat, df_population, by = "STATE_NAME") 
+
+
+df_stat_new <- subset(df_stat_merge, select = c(STATE,STATE_NAME,OWNER, Total_beds, POPESTIMATE2019)) %>% mutate(BEDS_RATIO = (Total_beds/POPESTIMATE2019)*1000) %>%
+  arrange(STATE_NAME)
+  
+df_stat_new <- filter(df_stat_new, OWNER != "REHABILITATION")
+violin_p1 <- ggplot(df_stat_new, aes(x=OWNER, y=BEDS_RATIO, fill=OWNER)) + 
+            geom_violin() + scale_x_discrete(labels=c("GOV-DIST", "GOV-FED", "GOV-LOC","GOV-ST","NON PROF","PRIV" )) +theme(axis.text.x = element_text(angle = 45, hjust = 1))+ stat_summary(fun.data="mean_sdl", mult=1, 
+                 geom="crossbar", width=0.05)+scale_fill_manual(values=c("#238A8DFF", "#404788FF", "#2D708EFF",  "#B8DE29FF",  "#20A387FF","#FDE725FF")) +
+  scale_y_discrete(name ="Beds / 1000 population", 
+       )+ labs(
+    title = "Hospital Ownership Distribution",
+    x = "Owned by",y="",
+    caption = 'Data Source: Homeland Infrastructure Foundation Level Data'
+  )+theme(plot.caption = element_text(hjust = 8.5)
+  )
+
+violin_p1
+```
+
+## Output 2
+
+#### It is found from the chart that Goverment hospitals have very less no of beds per 1000 people compared to Non profit and Proprietary hospitals. It is also found that Goverment owned hospitals has almost same Bed ratio across the states and ownership. Bed ratio for Non profit Hospitals is largely distributed across the states which shows disparity in no of beds across the states for Non profit hospitals. For Proprietary owned hospitals distribution across the states is also widely distributed. It is clearly seen from the chart that Non profit hospitals is contributing marginally well compared to other types of ownership.
+
+## Question 3
+
+### what is the relationship of Total number of hospitals vs Total number of beds across every states for the different types of ownership ?
+
+```{r Scattered plot for no of hospitals vs no of beds for each ownership , echo=FALSE, message=FALSE, warning=FALSE}
+df_scat_1 <- df_hsp_final %>%
+            filter(OWNER == "GOVERNMENT - DISTRICT/AUTHORITY" ) %>%
+           group_by(STATE_NAME) %>%
+           summarise(Total_Hospital = n(),Total_Beds = sum(BEDS))
+
+
+
+
+p1 <- ggplot(df_scat_1, aes(x=Total_Hospital,y=Total_Beds)) + geom_point(color='#3CBB75FF') +ggtitle("GOVERNMENT - DISTRICT") + theme(plot.title = element_text(color='#33638DFF',size=10))
+
+
+
+df_scat_2 <- df_hsp_final %>%
+            filter(OWNER == "GOVERNMENT - LOCAL" ) %>%
+           group_by(STATE_NAME) %>%
+           summarise(Total_Hospital = n(),Total_Beds = sum(BEDS))
+
+
+p2 <- ggplot(df_scat_2, aes(x=Total_Hospital,y=Total_Beds)) + geom_point(color='#3CBB75FF') +ggtitle("GOVERNMENT - LOCAL") + theme(plot.title = element_text(color='#33638DFF',size=10))
+
+
+df_scat_3 <- df_hsp_final %>%
+            filter(OWNER == "GOVERNMENT - STATE" ) %>%
+           group_by(STATE_NAME) %>%
+           summarise(Total_Hospital = n(),Total_Beds = sum(BEDS))
+
+
+
+p3 <- ggplot(df_scat_3, aes(x=Total_Hospital,y=Total_Beds)) + geom_point(color='#3CBB75FF')+ggtitle("GOVERNMENT - STATE") + theme(plot.title = element_text(color='#33638DFF',size=10))
+
+
+
+
+df_scat_4 <- df_hsp_final %>%
+            filter(OWNER == "GOVERNMENT - FEDERAL" ) %>%
+           group_by(STATE_NAME) %>%
+           summarise(Total_Hospital = n(),Total_Beds = sum(BEDS))
+
+
+
+p4 <- ggplot(df_scat_4, aes(x=Total_Hospital,y=Total_Beds)) + geom_point(color='#3CBB75FF')+ggtitle("GOVERNMENT - FEDERAL") + theme(plot.title = element_text(color='#33638DFF',size=10))
+
+
+df_scat_5 <- df_hsp_final %>%
+            filter(OWNER == "NON-PROFIT" ) %>%
+           group_by(STATE_NAME) %>%
+           summarise(Total_Hospital = n(),Total_Beds = sum(BEDS))
+
+
+p5 <- ggplot(df_scat_5, aes(x=Total_Hospital,y=Total_Beds)) + geom_point(color='#3CBB75FF')+ggtitle("NON-PROFIT" ) + theme(plot.title = element_text(color='#33638DFF',size=10))
+
+
+
+df_scat_6 <- df_hsp_final %>%
+            filter(OWNER == "PROPRIETARY" ) %>%
+           group_by(STATE_NAME) %>%
+           summarise(Total_Hospital = n(),Total_Beds = sum(BEDS))
+
+
+p6 <- ggplot(df_scat_6, aes(x=Total_Hospital,y=Total_Beds)) + geom_point(color='#3CBB75FF')+ggtitle("PROPRIETARY" ) + theme(plot.title = element_text(color='#33638DFF',size=10))
+
+
+library(gridExtra)
+library(grid)
+grid.arrange(p1,p2,p3,p4,p5,p6,nrow=2,ncol=3, top = textGrob("Total number of Beds vs Hospitals") ) 
+
+```
+
+## Output -3
+
+#### It can be inferred from the chart that Non-profit and Proprietary owned hospitals have more number of beds per hospitals compared to goverment owned hospitals. It is found that there is wide disparity in nummber of beds per hospital across the Goverment - district owned hospitals and Goverment - federal owned hospitals. It shows the difference in performance of different type of district, state and local goverment body for Beds per hospitals. The Bed ratio across the states is also widely scattered for federal goverment owned hospitals.
+
+# Section 2 - Analysing contribution of different types of Ownership Body in US Hospital infrastructure
+
+## Question 1
+
+### What is percetage distribution of Total number of beds across different types of ownership for US?
+
+```{r Pie chart for distribution of no of beds based on ownership , echo=FALSE, message=FALSE, warning=FALSE}
+
+library(viridis)
+palette5 <- viridis_pal(option = "D")(10)     # Apply viridis_pal function
+
+owned_by <- df_hospital_final %>%
+  filter(OWNER != "REHABILITATION") %>%
+  group_by(OWNER) %>% # apply the grouping on hospital ownership
+  summarise(n=sum(BEDS)) %>% # take a count based on ownership
+  ungroup() %>% 
+  mutate(per=n/sum(n)) %>% 
+  arrange(desc(OWNER)) # arrange in descending order of ownership %
+
+# take a percentage of the count of ownership
+owned_by$label <- scales::percent(owned_by$per)
+
+# Plot the percentage of types ie categories of hospitals in USA
+np_3<-ggplot(data=owned_by)+
+  geom_bar(aes(x="", y=per, fill=OWNER), stat="identity", width = 2.5)+
+  # plot pie chart
+  coord_polar("y", start=0)+
+  # apply a theme for proper visualization
+  theme_void()+scale_fill_manual(values = palette5)+
+  # set the percentage of the highlighted part in pie chart 
+  #geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  ggtitle('Percentage distribution of no of beds based on ownership across the USA')+geom_label_repel(data = owned_by,
+                   aes(x=1, y = cumsum(per) - per/2, label = paste0(label)),
+                   size = 3, nudge_x = 1.5, show.legend = FALSE) 
+  # set the percentage of the highlighted part in pie chart 
+ 
+
+np_3
+```
+
+## Output 1
+
+#### It is found that Non profit hospitals have major contrubution in providing US healthcare infrastructure. Non profit hospitals has highest contribution in providing Hospitals Beds followed by Proprietary and goverment owned hospitals. State and federal goverment are doing almost equallly same.
+
+## Question 2
+
+### What is percetage distribution of Total number of hospitals for different hospital types in US?
+
+```{r Pie chart for Percentage distribution of different hospital types in USA , echo=FALSE, message=FALSE, warning=FALSE}
+
+library(viridis)
+palette5 <- viridis_pal(option = "D")(10)     # Apply viridis_pal function
+
+
+hsp_type <- df_hospital_final %>% 
+  group_by(TYPE) %>% # apply the grouping on hospital type
+  count() %>% # take a count based on type
+  ungroup() %>% 
+  mutate(per=`n`/sum(`n`)) %>% 
+  arrange(desc(TYPE)) # arrange in descending order of the type
+
+# take a percentage of the count of the hospital type 
+hsp_type$label <- scales::percent(hsp_type$per)
+
+# Plot the percentage of types ie categories of hospitals in USA
+np_1<-ggplot(data=hsp_type)+
+  geom_bar(aes(x="", y=per, fill=TYPE), stat="identity", width = 2.5)+
+  # plot pie chart
+  coord_polar("y", start=0)+
+  # apply a theme for proper visualization
+  theme_void()+
+scale_fill_manual(values = palette5)+
+  # set the percentage of the highlighted part in pie chart 
+  #geom_text(aes(x=1, y = cumsum(per) - per/2, label=label)) +
+  ggtitle('Percentage of different hospital types in USA')+geom_label_repel(data = hsp_type,
+                   aes(x=1, y = cumsum(per) - per/2, label = paste0(label)),
+                   size = 3, nudge_x = 1.5, show.legend = FALSE)
+np_1
+```
+
+## Output 2
+
+#### General Acute care type is having highest number of hospitals followed by Critical Access , Psychiatric and Long term care. The percentage of Children hospital is only 1.591 % which comparatively very low. Hospitals specifically dedicated to women and special category are also the lowest in number across the USA.
+
+## Question 3
+
+### What is status of hospitals across the US for different ownership type ?
+
+```{r stacked Bar chart for Hospital status across ownership , echo=FALSE, message=FALSE, warning=FALSE}
+
+#Finding the Number of Hospitals grouped according to Status and Owner
+df2 <- df_hospital_final %>% group_by(OWNER, STATUS) %>% count()
+
+#Removing the REHABILITATION value from the dataframe as it is an error value
+df2<- df2[!(df2$OWNER=="REHABILITATION"),]
+
+#Renaming the column name from n to Number of Hospitals
+colnames(df2) <- c("OWNER", "STATUS", "Number_of_Hospitals")
+
+
+#df2 %>% summarise(total=sum(Number_of_Hospitals))
+#Stacked Bar chart of OWNER vs Number_of_Hospitals
+df_bar <- df2 %>% 
+  hchart(
+    'column', hcaes(x = 'OWNER', y = 'Number_of_Hospitals', group = 'STATUS'),
+    stacking = "normal"
+    ) %>%
+  hc_colors(c( "#95D840FF", "#2D708EFF")) %>%
+  hc_yAxis(
+    min=0,max=3600
+    ) %>%
+  hc_title(text = "Distribution of number of hospitals and their status across ownership",margin = 20,
+align = "center")
+df_bar
+```
+
+## OUTPUT 3
+
+#### From the given stacked bar chart, we can infer that Non-profit organizations have the highest count for hospitals that are open as compared to other owners. The highest ratio of open to closed hospitals is of Government Federal- 50:1. All the ownership body is performing good in terms number of Open Hosptls.
+
+# Section 3 - Analysing contributing factors for difference in performance for the Ohio and Washigton State.
+
+## Question 1 - What is the percentage distribution of Total number of Beds across the ownership in OHIO state?
+
+```{r OHIO  , echo=FALSE, message=FALSE, warning=FALSE}
+#filter dataframe for oh
+df_oh <- df_hospital_final %>%
+           filter(STATE ==  "OH")
+
+# find the counts of all categories (based on 'OWNER' type)
+donut_plot <- df_oh %>% group_by(OWNER) %>% summarise(Count = sum(BEDS))
+ 
+# Compute percentages
+donut_plot$fraction = donut_plot$Count / sum(donut_plot$Count)
+
+# Compute the cumulative percentages (top of each rectangle)
+donut_plot$ymax = cumsum(donut_plot$fraction)
+
+# Compute the cumulative percentages for each column index - 1
+donut_plot$ymin = c(0, donut_plot$ymax[1:(nrow(donut_plot)-1)])
+
+# create a column for the label positions in the chart
+donut_plot$labelPosition <- (donut_plot$ymax + donut_plot$ymin) / 2
+
+# create a column for the label values as a percentage (ymax - ymin = the percentage out of 100)
+donut_plot$label <- paste0(donut_plot$color, "\n ", round(donut_plot$ymax - donut_plot$ymin, 2)*100, "%")
+
+
+
+# plot the donut
+donut_p1 <- ggplot(donut_plot, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=OWNER)) +
+  geom_rect() +
+  coord_polar(theta="y") + 
+  scale_fill_manual(values=c("#238A8DFF", "#404788FF", "#2D708EFF",  "#B8DE29FF",  "#29AF7FFF","#FDE725FF")) +
+ 
+  xlim(c(1, 4)) +
+  geom_label( x=3.5, aes(y=labelPosition, label=label), size=3.5) +
+   theme_void() +
+  
+  ggtitle("OHIO HOSPITAL OWNERSHIP BY TOTAL BEDS") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(legend.position = "right") 
+donut_p1
+```
+
+## Output 1
+
+#### In OHIO state Non profit Hospital has 76% percent contribution in Total number beds Which is comparatiely higher than US average( from section 2 question 1 - which is 59% ). While Propritarty owned hospitals have only 10 % contribution which is comparatively low. so it can be inferred that Non prpfit hopitals playing vital role is providing healthcare infrastructure in good performing state OHIO.
+
+## Question 2 What is the percentage distribution of Total number of Beds across the ownership in WASHIGTON state ?
+
+```{r WASHIGTON , echo=FALSE, message=FALSE, warning=FALSE}
+#filter dataframe for oh
+df_wa <- df_hospital_final %>%
+           filter(STATE ==  "WA")
+
+# find the counts of all categories (based on 'owner' type)
+donut_plot_wa <- df_wa %>% group_by(OWNER) %>% summarise(Count = sum(BEDS))
+ 
+# Compute percentages
+donut_plot_wa$fraction = donut_plot_wa$Count / sum(donut_plot_wa$Count)
+
+# Compute the cumulative percentages (top of each rectangle)
+donut_plot_wa$ymax = cumsum(donut_plot_wa$fraction)
+
+# Compute the cumulative percentages for each column index - 1
+donut_plot_wa$ymin = c(0, donut_plot_wa$ymax[1:(nrow(donut_plot_wa)-1)])
+
+# create a column for the label positions in the chart
+donut_plot_wa$labelPosition <- (donut_plot_wa$ymax + donut_plot_wa$ymin) / 2
+
+# create a column for the label values as a percentage (ymax - ymin = the percentage out of 100)
+donut_plot_wa$label <- paste0(donut_plot_wa$color, "\n ", round(donut_plot_wa$ymax - donut_plot_wa$ymin, 2)*100, "%")
+
+
+
+# plot the donut
+donut_p2 <- ggplot(donut_plot_wa, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=OWNER)) +
+  geom_rect() +
+  coord_polar(theta="y") + 
+  scale_fill_manual(values=c("#238A8DFF", "#404788FF", "#2D708EFF",  "#B8DE29FF",  "#29AF7FFF","#FDE725FF")) +
+  xlim(c(1, 4)) +
+  geom_label( x=3.5, aes(y=labelPosition, label=label), size=3.5) +
+  theme_void() +
+  ggtitle("WASHIGTON HOSPITAL OWNERSHIP BY TOTAL BEDS") +
+  theme(plot.title = element_text(hjust = 0.0)) +
+  theme(legend.position = "right")
+donut_p2
+```
+
+## OUTPUT 2
+
+#### Contribution of Non profit hospitals in providing Hospital beds is 56 % in WASHINGTON while that in OHIO state is 76 %. While goverment owned hospitals have higher contribution compared to that of in OHIO state.
+
+## Question 3
+
+## Using Alluvial chart comparing the two states of Washington and Ohio for no of beds based on different categories of Owners.
+
+```{r Alluvial Chart , echo=FALSE, message=FALSE, warning=FALSE}
+#Filtering according to the states of Washington & Ohio and grouping by state and owner
+df_hospital_oh_wash <- df_hospital_final %>%
+filter((STATE_NAME == 'Ohio') | (STATE_NAME == 'Washington'))%>% group_by(STATE_NAME, OWNER) %>%
+  summarise(n = round(sum(BEDS))) 
+#Renaming the column name from n to Number of Hospitals
+colnames(df_hospital_oh_wash) <- c("STATE_NAME", "OWNER", "Number_of_Beds")
+
+library(ggalluvial) #For plotting alluvial chart
+
+ggplot(data = df_hospital_oh_wash,
+       aes(axis1 = STATE_NAME,axis2 = OWNER, y = Number_of_Beds)) +
+  geom_alluvium(aes(fill = OWNER)) +
+  geom_stratum() +
+  geom_text(stat = "stratum", size = 2.3,
+            aes(label = after_stat(stratum))) +
+  scale_x_discrete(limits = c("STATE_NAME", "OWNER"),
+                   expand = c(0.15, 0.05)) +
+  theme_void()+
+  ggtitle(
+    "Ownership distribution for the States of Washington and Ohio based on Number of beds"
+  )+ 
+scale_fill_manual(values=c("#440154FF","#33638DFF","#1F968BFF","#29AF7FFF", "#55C667FF", "#FDE725FF"))
+```
+
+## OUTPUT 3
+
+#### In this alluvial chart, we have selected the states of Washington and Ohio because Ohio has a good Beds per 1000 ratio with a considerable population while Washington has a Beds per 1000 ratio is 2.35. The plot gives us a distribution of number of beds based on different owner organizations for both the states. For both, Non Profit organizations have the highest number of beds available. And difference in the Beds provided is highest by Non profit hospitals compared to other ownership type. It shows that Non profit hospitals is main factor in providing US healthcare.
+
+## [Summary and Conclusion]{.underline}
+
+#### In the first section, we analysed performance of different states using ratio of total number of Bed per 1000 people. We found wide disparity in bed ratio across the states. By ploting violin chart we found that non profit hospital has wide distribution for BED RATIO across the states. Using Scattered plot we found relationship between number of beds vs number of hospitals across the states for different type of owneship. It shows that Non profit and Proprietary hospital has better Bed to hospital ratio.
+
+#### In section-2 we analysed distribution of hospitals and number of Beds across the different ownership types. And found that Non profit hospitals have highest contribution in providing healthcare infrastructure in US. As all types of hospitals doing better in terms of percentage of open hospitals, status(open/close) could not be the reason for the disparity in performance across the state.
+
+#### In Section-3 we took Ohio ( which is better performing state - No of Beds per 1000 people is 4.67 and Total population is 11.67 million) and Washington (which is not better performing state - No of beds per 1000 people is 2.34 and Population is 7.6 million) state as example for better understanding the disparity in healthcare among states. and here also we found that Non profit hospitals is playing vital role in providing healthcare infrastructure.
+
+#### Out of probable factors like inability of government in providing healthcare infrastructure, status ( open vs close) of the available hospitals and ownership of hospitals for disparity in healthcare performance across different states , we found that owneship playing major role. Non Profit hospital is deciding factor for the Healthcare performance.
+
+#### 
